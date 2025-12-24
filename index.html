@@ -1,111 +1,80 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Wizard Chess</title>
-<style>
-body { font-family: Arial; background:#111; color:#fff; text-align:center; }
-button { padding:10px 20px; margin:8px; }
-.turn { font-size:22px; margin:15px; color:#ffd700; }
-#status { color:#0f0; margin:10px; }
-#log { font-size:14px; margin-top:10px; }
-input { padding:8px; font-size:16px; width:200px; text-transform:uppercase; }
-</style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Magic Chess Voice Control</title>
+  <style>
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    button { font-size: 16px; padding: 10px 20px; margin: 10px; }
+    #log { margin-top: 20px; font-size: 18px; }
+  </style>
 </head>
-
 <body>
+  <h1>Magic Chess Voice Control</h1>
+  <button id="connect">Connect Arduino</button>
+  <button id="start">Start Listening</button>
+  <div id="log"></div>
 
-<h1>🧙 Wizard Chess</h1>
+  <script>
+    let port;
+    let writer;
 
-<div class="turn" id="turn">WHITE'S TURN</div>
-<div id="status">🔴 Arduino: Not connected</div>
-
-<button onclick="connectArduino()">🔌 Connect Arduino</button>
-<button onclick="startListening()">🎤 Start Listening</button>
-
-<br><br>
-<input id="textMove" placeholder="E2 E4">
-<button onclick="sendText()">▶ Move (Text)</button>
-
-<div id="log"></div>
-
-<script>
-let port, writer;
-let currentPlayer = "WHITE";
-
-const log = msg => document.getElementById("log").innerHTML += msg + "<br>";
-
-async function connectArduino() {
-  try {
-    port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 9600 });
-    writer = port.writable.getWriter();
-    document.getElementById("status").innerText = "🟢 Arduino: Connected";
-    log("Arduino connected");
-  } catch {
-    alert("Arduino not found or permission denied");
-  }
-}
-
-async function sendToArduino(msg) {
-  if (!writer) {
-    alert("Arduino not connected");
-    return;
-  }
-  await writer.write(new TextEncoder().encode(msg + "\n"));
-  log("➡ " + msg);
-  switchTurn();
-}
-
-function switchTurn() {
-  currentPlayer = currentPlayer === "WHITE" ? "BLACK" : "WHITE";
-  document.getElementById("turn").innerText = currentPlayer + "'S TURN";
-}
-
-function sendText() {
-  const move = document.getElementById("textMove").value.trim();
-  if (!/^[A-H][1-8]\s[A-H][1-8]$/.test(move)) {
-    alert("Use format: E2 E4");
-    return;
-  }
-  sendToArduino("MOVE " + move);
-  document.getElementById("textMove").value = "";
-}
-
-// -------- Voice --------
-function startListening() {
-  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SR) {
-    alert("Microphone or speech recognition not available");
-    return;
-  }
-
-  const rec = new SR();
-  rec.lang = "en-US";
-  rec.start();
-
-  rec.onresult = e => {
-    const text = e.results[0][0].transcript.toUpperCase();
-    log("🎤 " + text);
-    const move = parseSpeech(text);
-    if (move) sendToArduino("MOVE " + move);
-    else alert("Could not understand move");
-  };
-}
-
-function parseSpeech(text) {
-  const nums = {ONE:1,TWO:2,THREE:3,FOUR:4,FIVE:5,SIX:6,SEVEN:7,EIGHT:8};
-  const files = "ABCDEFGH";
-  let parts = text.split(" ");
-  let found = [];
-  for (let i=0;i<parts.length-1;i++) {
-    if (files.includes(parts[i]) && nums[parts[i+1]]) {
-      found.push(parts[i] + nums[parts[i+1]]);
+    async function connectArduino() {
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 9600 });
+        writer = port.writable.getWriter();
+        log("✅ Arduino Connected!");
+      } catch (e) {
+        log("❌ Connection Failed: " + e);
+      }
     }
-  }
-  return found.length >= 2 ? found[0] + " " + found[1] : null;
-}
-</script>
 
+    function log(msg) {
+      document.getElementById("log").innerText += msg + "\n";
+      console.log(msg);
+    }
+
+    async function sendToArduino(msg) {
+      if (!writer) return log("⚠ Arduino not connected");
+      const data = new TextEncoder().encode(msg + "\n");
+      await writer.write(data);
+      log("➡ Sent to Arduino: " + msg);
+    }
+
+    function startListening() {
+      const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      recognition.lang = 'en-US';
+      recognition.interimResults = false;
+      recognition.continuous = true;
+
+      recognition.onresult = (event) => {
+        const transcript = event.results[event.results.length -1][0].transcript.trim();
+        log("🎤 Heard: " + transcript);
+
+        // Check if move format "move E2 to E4"
+        const regex = /move\s([A-H][1-8])\s(to)\s([A-H][1-8])/i;
+        const match = transcript.match(regex);
+        if(match){
+          const from = match[1].toUpperCase();
+          const to = match[3].toUpperCase();
+          log(`♟ Move: ${from} → ${to}`);
+          // Send to Arduino as e.g. "E2,E4"
+          sendToArduino(from + "," + to);
+        } else {
+          log("⚠ Invalid move format. Say 'move E2 to E4'");
+        }
+      }
+
+      recognition.onerror = (event) => log("❌ Speech error: " + event.error);
+
+      recognition.start();
+      log("🎧 Listening... Say moves like 'move E2 to E4'");
+    }
+
+    document.getElementById("connect").addEventListener("click", connectArduino);
+    document.getElementById("start").addEventListener("click", startListening);
+  </script>
 </body>
 </html>
