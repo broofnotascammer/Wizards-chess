@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wizard Chess</title>
+<style>
+body { font-family: Arial; background:#111; color:#fff; text-align:center; }
+button { padding:10px 20px; margin:8px; }
+.turn { font-size:22px; margin:15px; color:#ffd700; }
+#status { color:#0f0; margin:10px; }
+#log { font-size:14px; margin-top:10px; }
+input { padding:8px; font-size:16px; width:200px; text-transform:uppercase; }
+</style>
+</head>
+
+<body>
+
+<h1>🧙 Wizard Chess</h1>
+
+<div class="turn" id="turn">WHITE'S TURN</div>
+<div id="status">🔴 Arduino: Not connected</div>
+
+<button onclick="connectArduino()">🔌 Connect Arduino</button>
+<button onclick="startListening()">🎤 Start Listening</button>
+
+<br><br>
+<input id="textMove" placeholder="E2 E4">
+<button onclick="sendText()">▶ Move (Text)</button>
+
+<div id="log"></div>
+
+<script>
+let port, writer;
+let currentPlayer = "WHITE";
+
+const log = msg => document.getElementById("log").innerHTML += msg + "<br>";
+
+async function connectArduino() {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 9600 });
+    writer = port.writable.getWriter();
+    document.getElementById("status").innerText = "🟢 Arduino: Connected";
+    log("Arduino connected");
+  } catch {
+    alert("Arduino not found or permission denied");
+  }
+}
+
+async function sendToArduino(msg) {
+  if (!writer) {
+    alert("Arduino not connected");
+    return;
+  }
+  await writer.write(new TextEncoder().encode(msg + "\n"));
+  log("➡ " + msg);
+  switchTurn();
+}
+
+function switchTurn() {
+  currentPlayer = currentPlayer === "WHITE" ? "BLACK" : "WHITE";
+  document.getElementById("turn").innerText = currentPlayer + "'S TURN";
+}
+
+function sendText() {
+  const move = document.getElementById("textMove").value.trim();
+  if (!/^[A-H][1-8]\s[A-H][1-8]$/.test(move)) {
+    alert("Use format: E2 E4");
+    return;
+  }
+  sendToArduino("MOVE " + move);
+  document.getElementById("textMove").value = "";
+}
+
+// -------- Voice --------
+function startListening() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    alert("Microphone or speech recognition not available");
+    return;
+  }
+
+  const rec = new SR();
+  rec.lang = "en-US";
+  rec.start();
+
+  rec.onresult = e => {
+    const text = e.results[0][0].transcript.toUpperCase();
+    log("🎤 " + text);
+    const move = parseSpeech(text);
+    if (move) sendToArduino("MOVE " + move);
+    else alert("Could not understand move");
+  };
+}
+
+function parseSpeech(text) {
+  const nums = {ONE:1,TWO:2,THREE:3,FOUR:4,FIVE:5,SIX:6,SEVEN:7,EIGHT:8};
+  const files = "ABCDEFGH";
+  let parts = text.split(" ");
+  let found = [];
+  for (let i=0;i<parts.length-1;i++) {
+    if (files.includes(parts[i]) && nums[parts[i+1]]) {
+      found.push(parts[i] + nums[parts[i+1]]);
+    }
+  }
+  return found.length >= 2 ? found[0] + " " + found[1] : null;
+}
+</script>
+
+</body>
+</html>
