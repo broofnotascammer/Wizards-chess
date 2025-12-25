@@ -1,104 +1,166 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Wizard Chess – Whisper Voice Control</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Magic Chess Voice Control</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      background: #111;
-      color: #0f0;
-      padding: 20px;
+    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+    button { font-size: 16px; padding: 8px 14px; margin: 6px; }
+    #log, #simOut { 
+      text-align: left; max-width: 900px; margin: auto; 
+      overflow: auto; background: #fafafa; border: 1px solid #ddd; 
+      padding: 8px; white-space: pre-wrap; font-size: 14px; 
     }
-    button {
-      padding: 10px 20px;
-      font-size: 16px;
-      margin-right: 10px;
-      cursor: pointer;
-    }
-    #log {
-      margin-top: 20px;
-      background: #000;
-      padding: 10px;
-      height: 200px;
-      overflow-y: auto;
-      border: 1px solid #0f0;
-    }
+    #log { height: 180px; }
+    #simOut { height: 100px; border: 1px dashed #bbb; background: #fffbea; }
   </style>
 </head>
 <body>
 
-<h2>🧙 Wizard Chess – Whisper Voice Control</h2>
+<h1>Magic Chess Voice Control</h1>
 
-<button id="recordBtn">🎙 Record Command</button>
+<button id="connect">Connect Arduino</button>
+<button id="start">Start Listening</button>
+<button id="resetFail">Reset Arduino Check</button>
+<div id="status"></div>
 
+<h3>Activity Log</h3>
 <div id="log"></div>
 
-<script type="module">
-  import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2";
+<h3>Simulation Output</h3>
+<div id="simOut"></div>
 
-  const log = (msg) => {
-    const div = document.getElementById("log");
-    div.innerHTML += msg + "<br>";
-    div.scrollTop = div.scrollHeight;
-  };
+<script>
+  let port = null, writer = null;
+  let arduinoCheckCount = 0;
+  let arduinoConnected = false;
+  const MAX_ASK = 3;
 
-  log("Loading Whisper model… please wait (first time only)");
+  function log(msg) {
+    const el = document.getElementById("log");
+    el.innerText += msg + "\n";
+    el.scrollTop = el.scrollHeight;
+    console.log(msg);
+  }
 
-  // Load Whisper model (small & fast)
-  const transcriber = await pipeline(
-    "automatic-speech-recognition",
-    "Xenova/whisper-tiny.en"
-  );
+  function simWrite(msg) {
+    const el = document.getElementById("simOut");
+    el.innerText += msg + "\n";
+    el.scrollTop = el.scrollHeight;
+  }
 
-  log("Whisper ready ✅");
+  function setStatus(msg) {
+    document.getElementById("status").innerText = msg;
+  }
 
-  let mediaRecorder;
-  let audioChunks = [];
+  async function connectArduino() {
+    if (!('serial' in navigator)) {
+      setStatus("Web Serial not supported (Chrome/Edge)");
+      log("Web Serial API not available.");
+      return;
+    }
+    try {
+      log("Requesting Arduino port...");
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 9600 });
+      writer = port.writable.getWriter();
+      arduinoConnected = true;
+      setStatus("Arduino Connected!");
+      log("✅ Arduino connected");
+    } catch (e) {
+      arduinoConnected = false;
+      setStatus("Arduino connection failed");
+      log("⛔ Connection failed: " + e.message);
+    }
+  }
 
-  document.getElementById("recordBtn").onclick = async () => {
-    audioChunks = [];
+  async function sendToArduino(msg) {
+    if (!arduinoConnected) {
+      log("⚠ Arduino not connected → running simulation");
+      simWrite("SIMULATED RX: " + msg);
+      simWrite("SIMULATED TX: OK");
+      return;
+    }
+    try {
+      const data = new TextEncoder().encode(msg + "\n");
+      await writer.write(data);
+      log("➡ Sent to Arduino: " + msg);
+    } catch (e) {
+      log("⚠ Arduino write failed, switching to simulation");
+      arduinoConnected = false;
+      askUseSimulation();
+    }
+  }
 
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaRecorder = new MediaRecorder(stream);
-
-    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
-
-    mediaRecorder.onstop = async () => {
-      log("Transcribing…");
-
-      const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      const audioData = new Float32Array(arrayBuffer);
-
-      const result = await transcriber(audioData);
-      const text = result.text.toUpperCase();
-
-      log("Heard: " + text);
-
-      // Parse chess move like "E2 TO E4"
-      const match = text.match(/([A-H][1-8]).*([A-H][1-8])/);
-      if (match) {
-        const move = `${match[1]},${match[2]}`;
-        log("Parsed Move ✅: " + move);
-
-        // TODO: send move to Arduino via Web Serial
-        // sendToArduino(move);
-
+  function askUseSimulation() {
+    if (arduinoCheckCount < MAX_ASK) {
+      arduinoCheckCount++;
+      if (confirm("Arduino not responding. Try again? (" + arduinoCheckCount + "/" + MAX_ASK + ")")) {
+        connectArduino();
       } else {
-        log("❌ Could not parse move");
+        log("Simulation activated by user.");
+      }
+    } else {
+      log("Max Arduino prompts reached → using simulation.");
+    }
+  }
+
+  document.getElementById("resetFail").addEventListener("click", () => {
+    arduinoCheckCount = 0;
+    log("🚩 Arduino retry count reset.");
+  });
+
+  function parseMoveText(text) {
+    text = text.trim().toLowerCase();
+    // E2 to E4, E2 2 E4, e2e4, e22e4 etc.
+    const letters = text.match(/[a-h]/g) || [];
+    const nums = text.match(/[1-8]/g) || [];
+    // build best guess: from letter+num to next letter+num
+    if (letters.length >= 2 && nums.length >= 2) {
+      let from = letters[0].toUpperCase() + nums[0];
+      let to   = letters[1].toUpperCase() + nums[1];
+      return [from, to];
+    }
+    return null;
+  }
+
+  function startListening() {
+    if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
+      log("SpeechRecognition not supported; try Chrome/Edge.");
+      return;
+    }
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const r = new SpeechRecognition();
+    r.continuous = true;
+    r.interimResults = false;
+    r.lang = "en-US";
+
+    r.onresult = (event) => {
+      const transcript = event.results[event.results.length - 1][0].transcript;
+      log("🎤 Heard: " + transcript);
+      const result = parseMoveText(transcript);
+      if (result) {
+        const [from, to] = result;
+        log(`♟ Parsed Move: ${from} → ${to}`);
+        sendToArduino(`${from},${to}`);
+      } else {
+        log("❗ Could not interpret move (try 'move E2 to E4')");
       }
     };
 
-    mediaRecorder.start();
-    log("Recording… speak now");
+    r.onerror = (e) => log("Speech error: " + e.error);
+    r.onend = () => log("Voice listening ended.");
 
-    // Record for 3 seconds
-    setTimeout(() => {
-      mediaRecorder.stop();
-      log("Recording stopped");
-    }, 3000);
-  };
+    r.start();
+    log("🎧 Listening for moves...");
+  }
+
+  document.getElementById("connect").addEventListener("click", connectArduino);
+  document.getElementById("start").addEventListener("click", startListening);
+
+  setStatus("Ready — connect Arduino then start listening.");
+  log("Site loaded. Use Chrome/Edge with Web Serial (Web Serial API) support.");  
 </script>
 
 </body>
