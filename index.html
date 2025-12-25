@@ -2,79 +2,104 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Magic Chess Voice Control</title>
+  <title>Wizard Chess – Whisper Voice Control</title>
   <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-    button { font-size: 16px; padding: 10px 20px; margin: 10px; }
-    #log { margin-top: 20px; font-size: 18px; }
+    body {
+      font-family: Arial, sans-serif;
+      background: #111;
+      color: #0f0;
+      padding: 20px;
+    }
+    button {
+      padding: 10px 20px;
+      font-size: 16px;
+      margin-right: 10px;
+      cursor: pointer;
+    }
+    #log {
+      margin-top: 20px;
+      background: #000;
+      padding: 10px;
+      height: 200px;
+      overflow-y: auto;
+      border: 1px solid #0f0;
+    }
   </style>
 </head>
 <body>
-  <h1>Magic Chess Voice Control</h1>
-  <button id="connect">Connect Arduino</button>
-  <button id="start">Start Listening</button>
-  <div id="log"></div>
 
-  <script>
-    let port;
-    let writer;
+<h2>🧙 Wizard Chess – Whisper Voice Control</h2>
 
-    async function connectArduino() {
-      try {
-        port = await navigator.serial.requestPort();
-        await port.open({ baudRate: 9600 });
-        writer = port.writable.getWriter();
-        log("✅ Arduino Connected!");
-      } catch (e) {
-        log("❌ Connection Failed: " + e);
+<button id="recordBtn">🎙 Record Command</button>
+
+<div id="log"></div>
+
+<script type="module">
+  import { pipeline } from "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2";
+
+  const log = (msg) => {
+    const div = document.getElementById("log");
+    div.innerHTML += msg + "<br>";
+    div.scrollTop = div.scrollHeight;
+  };
+
+  log("Loading Whisper model… please wait (first time only)");
+
+  // Load Whisper model (small & fast)
+  const transcriber = await pipeline(
+    "automatic-speech-recognition",
+    "Xenova/whisper-tiny.en"
+  );
+
+  log("Whisper ready ✅");
+
+  let mediaRecorder;
+  let audioChunks = [];
+
+  document.getElementById("recordBtn").onclick = async () => {
+    audioChunks = [];
+
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+
+    mediaRecorder.onstop = async () => {
+      log("Transcribing…");
+
+      const audioBlob = new Blob(audioChunks, { type: "audio/webm" });
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const audioData = new Float32Array(arrayBuffer);
+
+      const result = await transcriber(audioData);
+      const text = result.text.toUpperCase();
+
+      log("Heard: " + text);
+
+      // Parse chess move like "E2 TO E4"
+      const match = text.match(/([A-H][1-8]).*([A-H][1-8])/);
+      if (match) {
+        const move = `${match[1]},${match[2]}`;
+        log("Parsed Move ✅: " + move);
+
+        // TODO: send move to Arduino via Web Serial
+        // sendToArduino(move);
+
+      } else {
+        log("❌ Could not parse move");
       }
-    }
+    };
 
-    function log(msg) {
-      document.getElementById("log").innerText += msg + "\n";
-      console.log(msg);
-    }
+    mediaRecorder.start();
+    log("Recording… speak now");
 
-    async function sendToArduino(msg) {
-      if (!writer) return log("⚠ Arduino not connected");
-      const data = new TextEncoder().encode(msg + "\n");
-      await writer.write(data);
-      log("➡ Sent to Arduino: " + msg);
-    }
+    // Record for 3 seconds
+    setTimeout(() => {
+      mediaRecorder.stop();
+      log("Recording stopped");
+    }, 3000);
+  };
+</script>
 
-    function startListening() {
-      const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
-      recognition.lang = 'en-US';
-      recognition.interimResults = false;
-      recognition.continuous = true;
-
-      recognition.onresult = (event) => {
-        const transcript = event.results[event.results.length -1][0].transcript.trim();
-        log("🎤 Heard: " + transcript);
-
-        // Check if move format "move E2 to E4"
-        const regex = /move\s([A-H][1-8])\s(to)\s([A-H][1-8])/i;
-        const match = transcript.match(regex);
-        if(match){
-          const from = match[1].toUpperCase();
-          const to = match[3].toUpperCase();
-          log(`♟ Move: ${from} → ${to}`);
-          // Send to Arduino as e.g. "E2,E4"
-          sendToArduino(from + "," + to);
-        } else {
-          log("⚠ Invalid move format. Say 'move E2 to E4'");
-        }
-      }
-
-      recognition.onerror = (event) => log("❌ Speech error: " + event.error);
-
-      recognition.start();
-      log("🎧 Listening... Say moves like 'move E2 to E4'");
-    }
-
-    document.getElementById("connect").addEventListener("click", connectArduino);
-    document.getElementById("start").addEventListener("click", startListening);
-  </script>
 </body>
 </html>
