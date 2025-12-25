@@ -147,22 +147,34 @@ function askSimulation() {
 
 /* ===================== MOVE PARSING ===================== */
 function normalizeSpeech(text) {
-  text = text.toLowerCase()
-    .replace(/-/g, " ")
-    .replace("two", "2")
-    .replace("four", "4")
-    .replace("one", "1")
-    .replace("three", "3")
-    .replace("five", "5")
-    .replace("six", "6")
-    .replace("seven", "7")
-    .replace("eight", "8");
+  text = text.toLowerCase();
 
-  const match = text.match(/([a-h][1-8])\s*(?:to| )\s*([a-h][1-8])/);
-  if (!match) return null;
+  const map = {
+    "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8"
+  };
 
-  return [match[1].toUpperCase(), match[2].toUpperCase()];
+  for (let word in map) {
+    text = text.replaceAll(word, map[word]);
+  }
+
+  // Remove noise words
+  text = text.replace(/move|pawn|piece|from|to|uh|um|please/g, " ");
+
+  // Replace separators
+  text = text.replace(/[-,]/g, " ");
+
+  // Extract chess squares
+  const squares = text.match(/[a-h][1-8]/g);
+
+  if (!squares || squares.length < 2) return null;
+
+  return [
+    squares[0].toUpperCase(),
+    squares[1].toUpperCase()
+  ];
 }
+  
 
 /* ===================== SEND MOVE ===================== */
 async function sendMove(from, to) {
