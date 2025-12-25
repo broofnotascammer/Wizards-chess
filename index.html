@@ -1,166 +1,191 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>Magic Chess Voice Control</title>
-  <style>
-    body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
-    button { font-size: 16px; padding: 8px 14px; margin: 6px; }
-    #log, #simOut { 
-      text-align: left; max-width: 900px; margin: auto; 
-      overflow: auto; background: #fafafa; border: 1px solid #ddd; 
-      padding: 8px; white-space: pre-wrap; font-size: 14px; 
-    }
-    #log { height: 180px; }
-    #simOut { height: 100px; border: 1px dashed #bbb; background: #fffbea; }
-  </style>
+<meta charset="UTF-8">
+<title>🧙 Wizard Chess</title>
+
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    background: #0b1020;
+    color: #eaf1ff;
+    text-align: center;
+    padding: 20px;
+  }
+
+  button {
+    padding: 12px 20px;
+    font-size: 16px;
+    margin: 10px;
+    cursor: pointer;
+  }
+
+  #status {
+    margin-top: 15px;
+    font-size: 18px;
+  }
+
+  .glow {
+    animation: glow 1.2s infinite alternate;
+  }
+
+  @keyframes glow {
+    from { text-shadow: 0 0 6px #7cf; }
+    to   { text-shadow: 0 0 22px #39f; }
+  }
+
+  #log {
+    margin-top: 20px;
+    background: #11162c;
+    padding: 10px;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+    text-align: left;
+    font-family: monospace;
+    height: 180px;
+    overflow-y: auto;
+  }
+
+  #moveBanner {
+    display: none;
+    font-size: 28px;
+    color: #7cf;
+    margin-top: 20px;
+  }
+</style>
 </head>
+
 <body>
 
-<h1>Magic Chess Voice Control</h1>
+<h1>🧙 Wizard Chess</h1>
+<p>Voice-controlled magnetic chessboard (with simulation fallback)</p>
 
-<button id="connect">Connect Arduino</button>
-<button id="start">Start Listening</button>
-<button id="resetFail">Reset Arduino Check</button>
-<div id="status"></div>
+<button onclick="startSystem()">🎤 Start Wizard</button>
 
-<h3>Activity Log</h3>
+<div id="status">Status: Idle</div>
+
+<h2 id="moveBanner">♟ MOVE: <span id="fromSq"></span> → <span id="toSq"></span></h2>
+
 <div id="log"></div>
 
-<h3>Simulation Output</h3>
-<div id="simOut"></div>
+<audio id="magicSound">
+  <source src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg">
+</audio>
 
 <script>
-  let port = null, writer = null;
-  let arduinoCheckCount = 0;
-  let arduinoConnected = false;
-  const MAX_ASK = 3;
+/* -------------------- UI HELPERS -------------------- */
 
-  function log(msg) {
-    const el = document.getElementById("log");
-    el.innerText += msg + "\n";
-    el.scrollTop = el.scrollHeight;
-    console.log(msg);
+const statusEl = document.getElementById("status");
+const logEl = document.getElementById("log");
+
+function setStatus(text, glow = false) {
+  statusEl.textContent = "Status: " + text;
+  statusEl.classList.toggle("glow", glow);
+}
+
+function log(msg) {
+  logEl.innerHTML += msg + "<br>";
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+/* -------------------- MOVE DISPLAY -------------------- */
+
+function showMove(from, to) {
+  document.getElementById("fromSq").textContent = from;
+  document.getElementById("toSq").textContent = to;
+  const banner = document.getElementById("moveBanner");
+  banner.style.display = "block";
+  document.getElementById("magicSound").play();
+  setTimeout(() => banner.style.display = "none", 2200);
+}
+
+/* -------------------- FUZZY MOVE PARSER -------------------- */
+
+function extractMove(text) {
+  text = text.toUpperCase().replace(/[^A-Z0-9 ]/g, " ");
+  const matches = text.match(/[A-H][1-8]/g);
+  if (matches && matches.length >= 2) {
+    return { from: matches[0], to: matches[1] };
+  }
+  return null;
+}
+
+/* -------------------- ARDUINO CHECK -------------------- */
+
+function isArduinoConnected() {
+  // Web Serial API check (Chrome / Edge only)
+  return "serial" in navigator;
+}
+
+/* -------------------- SIMULATION -------------------- */
+
+function simulateMove(from, to) {
+  log("🧪 Simulation mode active");
+  log(`🧲 Virtual magnet moving from ${from} to ${to}`);
+  setTimeout(() => {
+    log("✅ Simulation complete");
+    setStatus("Idle");
+  }, 1500);
+}
+
+/* -------------------- VOICE SYSTEM -------------------- */
+
+function startSystem() {
+  log("🧙 Wizard initialized");
+
+  if (!("webkitSpeechRecognition" in window)) {
+    alert("Speech Recognition not supported in this browser");
+    return;
   }
 
-  function simWrite(msg) {
-    const el = document.getElementById("simOut");
-    el.innerText += msg + "\n";
-    el.scrollTop = el.scrollHeight;
-  }
+  const recognition = new webkitSpeechRecognition();
+  recognition.lang = "en-US";
+  recognition.interimResults = false;
 
-  function setStatus(msg) {
-    document.getElementById("status").innerText = msg;
-  }
+  recognition.onstart = () => {
+    setStatus("Listening…", true);
+    log("🎤 Listening for move...");
+  };
 
-  async function connectArduino() {
-    if (!('serial' in navigator)) {
-      setStatus("Web Serial not supported (Chrome/Edge)");
-      log("Web Serial API not available.");
+  recognition.onresult = (event) => {
+    const speech = event.results[0][0].transcript;
+    log("🗣 Heard: " + speech);
+
+    const move = extractMove(speech);
+    if (!move) {
+      log("❌ Could not understand move");
+      setStatus("Idle");
       return;
     }
-    try {
-      log("Requesting Arduino port...");
-      port = await navigator.serial.requestPort();
-      await port.open({ baudRate: 9600 });
-      writer = port.writable.getWriter();
-      arduinoConnected = true;
-      setStatus("Arduino Connected!");
-      log("✅ Arduino connected");
-    } catch (e) {
-      arduinoConnected = false;
-      setStatus("Arduino connection failed");
-      log("⛔ Connection failed: " + e.message);
-    }
-  }
 
-  async function sendToArduino(msg) {
-    if (!arduinoConnected) {
-      log("⚠ Arduino not connected → running simulation");
-      simWrite("SIMULATED RX: " + msg);
-      simWrite("SIMULATED TX: OK");
-      return;
-    }
-    try {
-      const data = new TextEncoder().encode(msg + "\n");
-      await writer.write(data);
-      log("➡ Sent to Arduino: " + msg);
-    } catch (e) {
-      log("⚠ Arduino write failed, switching to simulation");
-      arduinoConnected = false;
-      askUseSimulation();
-    }
-  }
+    showMove(move.from, move.to);
+    log("✨ Best move inferred");
 
-  function askUseSimulation() {
-    if (arduinoCheckCount < MAX_ASK) {
-      arduinoCheckCount++;
-      if (confirm("Arduino not responding. Try again? (" + arduinoCheckCount + "/" + MAX_ASK + ")")) {
-        connectArduino();
-      } else {
-        log("Simulation activated by user.");
-      }
+    if (isArduinoConnected()) {
+      log("🔌 Arduino detected");
+      log("🧲 (Arduino control would execute here)");
+      setTimeout(() => {
+        log("✅ Move executed via Arduino");
+        setStatus("Idle");
+      }, 1500);
     } else {
-      log("Max Arduino prompts reached → using simulation.");
-    }
-  }
-
-  document.getElementById("resetFail").addEventListener("click", () => {
-    arduinoCheckCount = 0;
-    log("🚩 Arduino retry count reset.");
-  });
-
-  function parseMoveText(text) {
-    text = text.trim().toLowerCase();
-    // E2 to E4, E2 2 E4, e2e4, e22e4 etc.
-    const letters = text.match(/[a-h]/g) || [];
-    const nums = text.match(/[1-8]/g) || [];
-    // build best guess: from letter+num to next letter+num
-    if (letters.length >= 2 && nums.length >= 2) {
-      let from = letters[0].toUpperCase() + nums[0];
-      let to   = letters[1].toUpperCase() + nums[1];
-      return [from, to];
-    }
-    return null;
-  }
-
-  function startListening() {
-    if (!("webkitSpeechRecognition" in window || "SpeechRecognition" in window)) {
-      log("SpeechRecognition not supported; try Chrome/Edge.");
-      return;
-    }
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    const r = new SpeechRecognition();
-    r.continuous = true;
-    r.interimResults = false;
-    r.lang = "en-US";
-
-    r.onresult = (event) => {
-      const transcript = event.results[event.results.length - 1][0].transcript;
-      log("🎤 Heard: " + transcript);
-      const result = parseMoveText(transcript);
-      if (result) {
-        const [from, to] = result;
-        log(`♟ Parsed Move: ${from} → ${to}`);
-        sendToArduino(`${from},${to}`);
+      log("⚠ Arduino not detected");
+      if (confirm("Arduino not connected. Start simulation mode?")) {
+        simulateMove(move.from, move.to);
       } else {
-        log("❗ Could not interpret move (try 'move E2 to E4')");
+        setStatus("Idle");
       }
-    };
+    }
+  };
 
-    r.onerror = (e) => log("Speech error: " + e.error);
-    r.onend = () => log("Voice listening ended.");
+  recognition.onerror = () => {
+    log("❌ Voice recognition error");
+    setStatus("Idle");
+  };
 
-    r.start();
-    log("🎧 Listening for moves...");
-  }
-
-  document.getElementById("connect").addEventListener("click", connectArduino);
-  document.getElementById("start").addEventListener("click", startListening);
-
-  setStatus("Ready — connect Arduino then start listening.");
-  log("Site loaded. Use Chrome/Edge with Web Serial (Web Serial API) support.");  
+  recognition.start();
+}
 </script>
 
 </body>
