@@ -1,191 +1,238 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>🧙 Wizard Chess</title>
+<meta charset="UTF-8" />
+<title>Wizard Chess Control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <style>
-  body {
-    font-family: Arial, sans-serif;
-    background: #0b1020;
-    color: #eaf1ff;
-    text-align: center;
-    padding: 20px;
-  }
-
-  button {
-    padding: 12px 20px;
-    font-size: 16px;
-    margin: 10px;
-    cursor: pointer;
-  }
-
-  #status {
-    margin-top: 15px;
-    font-size: 18px;
-  }
-
-  .glow {
-    animation: glow 1.2s infinite alternate;
-  }
-
-  @keyframes glow {
-    from { text-shadow: 0 0 6px #7cf; }
-    to   { text-shadow: 0 0 22px #39f; }
-  }
-
-  #log {
-    margin-top: 20px;
-    background: #11162c;
-    padding: 10px;
-    max-width: 600px;
-    margin-left: auto;
-    margin-right: auto;
-    text-align: left;
-    font-family: monospace;
-    height: 180px;
-    overflow-y: auto;
-  }
-
-  #moveBanner {
-    display: none;
-    font-size: 28px;
-    color: #7cf;
-    margin-top: 20px;
-  }
+body {
+  font-family: Arial, sans-serif;
+  background: #0f172a;
+  color: #e5e7eb;
+  text-align: center;
+  padding: 20px;
+}
+button {
+  padding: 10px 16px;
+  margin: 6px;
+  font-size: 15px;
+  cursor: pointer;
+}
+input {
+  padding: 8px;
+  font-size: 15px;
+  width: 240px;
+}
+#log, #sim {
+  text-align: left;
+  margin: 15px auto;
+  padding: 10px;
+  max-width: 900px;
+  height: 160px;
+  overflow-y: auto;
+  background: #020617;
+  border: 1px solid #334155;
+  white-space: pre-wrap;
+}
+.badge {
+  padding: 4px 10px;
+  border-radius: 12px;
+  margin-left: 6px;
+}
+.white { background: #f8fafc; color: #020617; }
+.black { background: #020617; color: #f8fafc; border: 1px solid #94a3b8; }
+.ok { color: #22c55e; }
+.bad { color: #ef4444; }
+.warn { color: #facc15; }
 </style>
 </head>
 
 <body>
 
-<h1>🧙 Wizard Chess</h1>
-<p>Voice-controlled magnetic chessboard (with simulation fallback)</p>
+<h1>♟ Wizard Chess Controller</h1>
 
-<button onclick="startSystem()">🎤 Start Wizard</button>
+<div>
+  Turn:
+  <span id="turnBadge" class="badge white">WHITE</span>
+</div>
 
-<div id="status">Status: Idle</div>
+<br>
 
-<h2 id="moveBanner">♟ MOVE: <span id="fromSq"></span> → <span id="toSq"></span></h2>
+<button id="connectBtn">Connect Arduino</button>
+<button id="listenBtn">🎤 Start Listening</button>
+<button id="stopBtn" disabled>Stop Listening</button>
+
+<br><br>
+
+<input id="manualInput" placeholder="E2 to E4" />
+<button id="sendBtn">Send Move</button>
 
 <div id="log"></div>
 
-<audio id="magicSound">
-  <source src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg">
-</audio>
+<h3>Simulation Output</h3>
+<div id="sim"></div>
 
 <script>
-/* -------------------- UI HELPERS -------------------- */
+/* ===================== GLOBAL STATE ===================== */
+let port = null;
+let writer = null;
+let recognition = null;
+let listening = false;
+let simulationMode = false;
+let currentTurn = "WHITE";
 
-const statusEl = document.getElementById("status");
+/* ===================== UI HELPERS ===================== */
 const logEl = document.getElementById("log");
+const simEl = document.getElementById("sim");
+const turnBadge = document.getElementById("turnBadge");
 
-function setStatus(text, glow = false) {
-  statusEl.textContent = "Status: " + text;
-  statusEl.classList.toggle("glow", glow);
-}
-
-function log(msg) {
-  logEl.innerHTML += msg + "<br>";
+function log(msg, cls="") {
+  logEl.innerText += msg + "\n";
   logEl.scrollTop = logEl.scrollHeight;
 }
 
-/* -------------------- MOVE DISPLAY -------------------- */
-
-function showMove(from, to) {
-  document.getElementById("fromSq").textContent = from;
-  document.getElementById("toSq").textContent = to;
-  const banner = document.getElementById("moveBanner");
-  banner.style.display = "block";
-  document.getElementById("magicSound").play();
-  setTimeout(() => banner.style.display = "none", 2200);
+function sim(msg) {
+  simEl.innerText += msg + "\n";
+  simEl.scrollTop = simEl.scrollHeight;
 }
 
-/* -------------------- FUZZY MOVE PARSER -------------------- */
+function toggleTurn() {
+  currentTurn = currentTurn === "WHITE" ? "BLACK" : "WHITE";
+  turnBadge.textContent = currentTurn;
+  turnBadge.className = "badge " + (currentTurn === "WHITE" ? "white" : "black");
+}
 
-function extractMove(text) {
-  text = text.toUpperCase().replace(/[^A-Z0-9 ]/g, " ");
-  const matches = text.match(/[A-H][1-8]/g);
-  if (matches && matches.length >= 2) {
-    return { from: matches[0], to: matches[1] };
+/* ===================== HARDWARE CHECKS ===================== */
+async function checkMicrophone() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    stream.getTracks().forEach(t => t.stop());
+    log("✔ Microphone detected", "ok");
+  } catch {
+    log("❌ Microphone not available", "bad");
   }
-  return null;
 }
 
-/* -------------------- ARDUINO CHECK -------------------- */
-
-function isArduinoConnected() {
-  // Web Serial API check (Chrome / Edge only)
-  return "serial" in navigator;
+function checkSerialSupport() {
+  if (!("serial" in navigator)) {
+    log("❌ Web Serial not supported in this browser", "bad");
+    return false;
+  }
+  return true;
 }
 
-/* -------------------- SIMULATION -------------------- */
-
-function simulateMove(from, to) {
-  log("🧪 Simulation mode active");
-  log(`🧲 Virtual magnet moving from ${from} to ${to}`);
-  setTimeout(() => {
-    log("✅ Simulation complete");
-    setStatus("Idle");
-  }, 1500);
+/* ===================== ARDUINO ===================== */
+async function connectArduino() {
+  if (!checkSerialSupport()) {
+    askSimulation();
+    return;
+  }
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 9600 });
+    writer = port.writable.getWriter();
+    log("✔ Arduino connected", "ok");
+  } catch {
+    log("⚠ Arduino not connected", "warn");
+    askSimulation();
+  }
 }
 
-/* -------------------- VOICE SYSTEM -------------------- */
+function askSimulation() {
+  const useSim = confirm("Arduino not connected.\nStart simulation mode?");
+  simulationMode = useSim;
+  if (useSim) log("🧪 Simulation mode enabled", "warn");
+}
 
-function startSystem() {
-  log("🧙 Wizard initialized");
+/* ===================== MOVE PARSING ===================== */
+function normalizeSpeech(text) {
+  text = text.toLowerCase()
+    .replace(/-/g, " ")
+    .replace("two", "2")
+    .replace("four", "4")
+    .replace("one", "1")
+    .replace("three", "3")
+    .replace("five", "5")
+    .replace("six", "6")
+    .replace("seven", "7")
+    .replace("eight", "8");
 
-  if (!("webkitSpeechRecognition" in window)) {
-    alert("Speech Recognition not supported in this browser");
+  const match = text.match(/([a-h][1-8])\s*(?:to| )\s*([a-h][1-8])/);
+  if (!match) return null;
+
+  return [match[1].toUpperCase(), match[2].toUpperCase()];
+}
+
+/* ===================== SEND MOVE ===================== */
+async function sendMove(from, to) {
+  if (currentTurn === "WHITE" && from[1] === "7") {
+    log("❌ Black tried to move on White turn");
+    return;
+  }
+  if (currentTurn === "BLACK" && from[1] === "2") {
+    log("❌ White tried to move on Black turn");
     return;
   }
 
-  const recognition = new webkitSpeechRecognition();
+  if (simulationMode || !writer) {
+    sim(`SIM MOVE ${from} → ${to}`);
+  } else {
+    await writer.write(new TextEncoder().encode(`${from},${to}\n`));
+    log(`➡ Sent to Arduino: ${from},${to}`);
+  }
+
+  toggleTurn();
+}
+
+/* ===================== SPEECH ===================== */
+function startListening() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) {
+    alert("Speech recognition not supported");
+    return;
+  }
+  recognition = new SR();
+  recognition.continuous = true;
   recognition.lang = "en-US";
-  recognition.interimResults = false;
 
-  recognition.onstart = () => {
-    setStatus("Listening…", true);
-    log("🎤 Listening for move...");
-  };
-
-  recognition.onresult = (event) => {
-    const speech = event.results[0][0].transcript;
-    log("🗣 Heard: " + speech);
-
-    const move = extractMove(speech);
-    if (!move) {
-      log("❌ Could not understand move");
-      setStatus("Idle");
-      return;
-    }
-
-    showMove(move.from, move.to);
-    log("✨ Best move inferred");
-
-    if (isArduinoConnected()) {
-      log("🔌 Arduino detected");
-      log("🧲 (Arduino control would execute here)");
-      setTimeout(() => {
-        log("✅ Move executed via Arduino");
-        setStatus("Idle");
-      }, 1500);
-    } else {
-      log("⚠ Arduino not detected");
-      if (confirm("Arduino not connected. Start simulation mode?")) {
-        simulateMove(move.from, move.to);
-      } else {
-        setStatus("Idle");
-      }
-    }
-  };
-
-  recognition.onerror = () => {
-    log("❌ Voice recognition error");
-    setStatus("Idle");
+  recognition.onresult = e => {
+    const t = e.results[e.results.length - 1][0].transcript;
+    log("🎤 " + t);
+    const move = normalizeSpeech(t);
+    if (move) sendMove(move[0], move[1]);
+    else log("⚠ Could not understand move");
   };
 
   recognition.start();
+  listening = true;
+  document.getElementById("listenBtn").disabled = true;
+  document.getElementById("stopBtn").disabled = false;
 }
+
+function stopListening() {
+  if (recognition) recognition.stop();
+  listening = false;
+  document.getElementById("listenBtn").disabled = false;
+  document.getElementById("stopBtn").disabled = true;
+}
+
+/* ===================== MANUAL ===================== */
+document.getElementById("sendBtn").onclick = () => {
+  const v = document.getElementById("manualInput").value;
+  const move = normalizeSpeech(v);
+  if (!move) return log("❌ Invalid move");
+  sendMove(move[0], move[1]);
+};
+
+/* ===================== INIT ===================== */
+document.getElementById("connectBtn").onclick = connectArduino;
+document.getElementById("listenBtn").onclick = startListening;
+document.getElementById("stopBtn").onclick = stopListening;
+
+checkMicrophone();
+checkSerialSupport();
+log("Ready. White moves first.");
 </script>
 
 </body>
