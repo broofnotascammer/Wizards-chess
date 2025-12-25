@@ -1,54 +1,39 @@
-#include <Servo.h>
+// Magic Chess – Arduino Controller
+// Receives moves like: E2,E4
 
-Servo servoX;
-Servo servoY;
-
-// Adjust after calibration
-int posX = 90;
-int posY = 90;
+String input = "";
 
 void setup() {
   Serial.begin(9600);
-
-  servoX.attach(9);
-  servoY.attach(10);
-
-  servoX.write(posX);
-  servoY.write(posY);
-
-  Serial.println("Wizard Chess Ready");
+  Serial.println("Magic Chess Arduino Ready");
 }
 
 void loop() {
-  if (Serial.available()) {
-    String cmd = Serial.readStringUntil('\n');
-    cmd.trim();
-
-    if (cmd.startsWith("MOVE")) {
-      char fromFile = cmd.charAt(5);
-      int fromRank = cmd.charAt(6) - '0';
-
-      char toFile = cmd.charAt(8);
-      int toRank = cmd.charAt(9) - '0';
-
-      movePiece(fromFile, fromRank, toFile, toRank);
+  while (Serial.available()) {
+    char c = Serial.read();
+    if (c == '\n') {
+      processMove(input);
+      input = "";
+    } else {
+      input += c;
     }
   }
 }
 
-void movePiece(char fFile, int fRank, char tFile, int tRank) {
-  moveToSquare(fFile, fRank);
+void processMove(String cmd) {
+  if (cmd.length() < 5) return;
+
+  String from = cmd.substring(0, 2);
+  String to   = cmd.substring(3, 5);
+
+  // Here you would move steppers / magnet
+  Serial.print("MOVE ");
+  Serial.print(from);
+  Serial.print(" -> ");
+  Serial.println(to);
+
+  // Placeholder delay to simulate motion
   delay(800);
-  moveToSquare(tFile, tRank);
-  delay(800);
-}
 
-void moveToSquare(char file, int rank) {
-  int x = map(file, 'A', 'H', 30, 150);
-  int y = map(rank, 1, 8, 30, 150);
-
-  servoX.write(x);
-  servoY.write(y);
-
-  delay(500);
+  Serial.println("DONE");
 }
